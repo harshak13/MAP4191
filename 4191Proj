@@ -1,0 +1,337 @@
+# Harsha Kalidindi
+# MAP4191 Project:
+# Predicting winner of Chess game with rating difference and position after 10 moves
+
+# Data was first cleaned (from games.csv) using python - calculated white_rating (difference)
+# as white_rating - black rating, ran first 10 moves of each game through python's
+# chess library using SimpleEngine (stockfish) to manually evaluate each
+# position after 10 moves. Removed draws and games with low increment, then
+# removed all variables except eval and white_rating (difference.
+
+# Reading 4191data.csv - Dataframe with rating difference,
+# evaluation after 10 moves (stockfish), and winner (after cleaning)
+
+chess <- read.csv(file = "4191data.csv")
+chess <- na.omit(chess)
+
+# Setting train/test data to test models without CV
+set.seed(1)
+sample <- sample.int(n = nrow(chess), size = floor(.75*nrow(chess)), replace = F)
+train <- chess[sample, ]
+test  <- chess[-sample, ]
+
+# Testing models with train/test split  (*without CV*)
+
+# Logistic regression
+ordlog <- glm(winner ~ white_rating + eval, data = train, family = binomial)
+summary(ordlog)
+ordlog.probs <- predict(ordlog, test, type="response")
+
+ordlog.preds <- rep(0, 3781)
+ordlog.preds[ordlog.probs >.5] <- 1
+table(ordlog.preds, test$winner)
+1-mean(ordlog.preds == test$winner)
+# error rate: .315525
+
+# LDA
+library(MASS)
+lda.fit <- lda(winner ~ white_rating + eval, data = train)
+lda.fit
+lda.pred <- predict(lda.fit, test)
+names(lda.pred)
+lda.class <- lda.pred$class
+table(lda.class, test$winner)
+1-mean(lda.class == test$winner)
+# error rate: .3136736
+
+# KNN
+library(class)
+# plot
+with(chess,
+     {
+       plot(white_rating, eval, col=winner)
+     }
+)
+Ypred_knn <- knn(train[,c("white_rating","eval")],
+                 test[,c("white_rating","eval")],
+                 train$winner, k=50)
+table(test$winner, Ypred_knn)
+1-mean(Ypred_knn == test$winner)
+# K=50 error rate: .3171119
+
+Ypred_knn <- knn(train[,c("white_rating","eval")],
+                 test[,c("white_rating","eval")],
+                 train$winner, k=100)
+table(test$winner, Ypred_knn)
+1-mean(Ypred_knn == test$winner)
+# K=100 error: .3062682
+# After testing different values for K, K=100 gave lowest error
+
+# SVM
+library(e1071)
+svm_model <- svm(winner ~ white_rating + eval, data=train)
+svm_pred <- predict(svm_model, test)
+svm_pred[svm_pred>0] <- 1
+table(svm_pred, test$winner)
+1-mean(svm_pred == test$winner)
+
+# errors: linear: .314996, polynomial = .360222, radial = .3136736
+# lowest error rate with radial kernal
+
+# Decision Tree (Classification)
+library(tree)
+set.seed(1)
+chess <- read.csv(file = "4191data.csv")
+chess <- na.omit(chess)
+chess$bin <- factor(ifelse(chess$winner < .5, "No", "Yes"))
+sample <- sample.int(n = nrow(chess), size = floor(.75*nrow(chess)), replace = F)
+train <- chess[sample, ]
+test  <- chess[-sample, ]
+treemod <- tree(bin ~ white_rating + eval, data=train)
+tree.pred <- predict(treemod, test, type="class")
+table(tree.pred, test$bin)
+1-mean(tree.pred == test$bin)
+# error: .3186988
+
+# "dummy model 1" - for comparison - rating only
+stupid.preds <- rep(0, 3781)
+stupid.preds[test$white_rating>0] <- 1
+table(stupid.preds, test$winner)
+1-mean(stupid.preds == test$winner)
+# error : .36524
+
+# "dummy model 2" - for comparison - eval only
+stupid2.preds <- rep(0, 3781)
+stupid2.preds[test$eval>0] <- 1
+table(stupid2.preds, test$winner)
+1-mean(stupid2.preds == test$winner)
+# error : .3488495
+
+# Testing models with 10-fold CV:
+# Creating 10 folds
+set.seed(1)
+folds <- cut(seq(1, nrow(chess)), breaks=10, labels=FALSE)
+
+# Performing 10-fold CV with same models:
+
+# Logistic regression
+cverr <- rep(0, 10)
+for(i in 1:10){
+  testIndexes <- which(folds==i,arr.ind=TRUE)
+  testData <- chess[testIndexes, ]
+  trainData <- chess[-testIndexes, ]
+ 
+  ordlog <- glm(winner ~ white_rating + eval, data = trainData, family = binomial)
+  summary(ordlog)
+  ordlog.probs <- predict(ordlog, testData, type="response")
+ 
+  ordlog.preds <- rep(0, nrow(testData))
+  ordlog.preds[ordlog.probs >.5] <- 1
+  #table(ordlog.preds, test$winner)
+  error <- 1-mean(ordlog.preds == testData$winner)
+  print(error)
+  cverr[i] <- error
+}
+meanerr <- mean(cverr)
+print(meanerr)
+# error: .3079595
+
+# LDA
+set.seed(1)
+library(MASS)
+cverr <- rep(0, 10)
+for(i in 1:10){
+  testIndexes <- which(folds==i,arr.ind=TRUE)
+  testData <- chess[testIndexes, ]
+  trainData <- chess[-testIndexes, ]
+ 
+  lda.fit <- lda(winner ~ white_rating + eval, data = trainData)
+  summary(lda.fit)
+  lda.pred <- predict(lda.fit, testData)
+  names(lda.pred)
+  lda.class <- lda.pred$class
+  #table(lda.class, testData$winner)
+  error <- 1-mean(lda.class == testData$winner)
+  print(error)
+  cverr[i] <- error
+}
+meanerr <- mean(cverr)
+print(meanerr)
+# error: 0.3073645
+
+# KNN
+set.seed(1)
+library(class)
+cverr <- rep(0, 10)
+for(i in 1:10){
+  testIndexes <- which(folds==i,arr.ind=TRUE)
+  testData <- chess[testIndexes, ]
+  trainData <- chess[-testIndexes, ]
+ 
+  Ypred_knn <- knn(trainData[,c("white_rating","eval")],
+                   testData[,c("white_rating","eval")],
+                   trainData$winner, k=50)
+  error <- 1-mean(Ypred_knn == testData$winner)
+  print(error)
+  cverr[i] <- error
+}
+meanerr <- mean(cverr)
+print(meanerr)
+# K=50 error: 0.3098108
+# K=100 error: 0.3038602
+# K=450 error: 0.30121
+# Values of K > 500 lead to too many ties
+# Higher values of K lead to lowest error rate by 10-fold CV.
+# Since a lot of noise in data, high value of K lead to smoother and less variable fit, so
+# data in top right corner will be clustered towards white, and bottom left will cluster to black
+#
+
+# SVM
+set.seed(1)
+library(e1071)
+cverr <- rep(0, 10)
+for(i in 1:10){
+  testIndexes <- which(folds==i,arr.ind=TRUE)
+  testData <- chess[testIndexes, ]
+  trainData <- chess[-testIndexes, ]
+  #print(testData)
+  #print(trainData)
+ 
+  svm_model <- svm(winner ~ white_rating + eval, data=trainData)
+  svm_pred <- predict(svm_model, testData)
+  #print(table(svm_pred, testData$winner))
+  svm_pred[svm_pred>0] <- 1
+  error <- 1-mean(svm_pred == testData$winner)
+  print(error)
+  cverr[i] <- error
+}
+meanerr <- mean(cverr)
+print(meanerr)
+# error: 0.3067691 (radial)
+# 0.3078271 (linear)
+
+# Classification Tree
+library(tree)
+set.seed(1)
+chess <- read.csv(file = "4191data.csv")
+chess <- na.omit(chess)
+chess$bin <- factor(ifelse(chess$winner < .5, "No", "Yes"))
+
+cverr <- rep(0, 10)
+for(i in 1:10){
+  testIndexes <- which(folds==i,arr.ind=TRUE)
+  testData <- chess[testIndexes, ]
+  trainData <- chess[-testIndexes, ]
+ 
+  treemod <- tree(bin ~ white_rating + eval, data=trainData)
+  tree.pred <- predict(treemod, testData, type="class")
+ 
+  #table(tree.pred, testData$bin)
+  error <- 1-mean(tree.pred == testData$bin)
+  print(error)
+  cverr[i] <- error
+}
+meanerr <- mean(cverr)
+print(meanerr)
+# error: 0.3382476
+
+# Ideas-
+# - Back to original dataset- run moves through decision tree individually
+# - neural net with board representation
+# - remove outliers
+# - change rating difference to percent
+
+# Starting with original dataset - running moves through decision tree individually
+# First, remove all irrelevant variables
+chess1 <- read.csv("games.csv")
+chess1$created_at <- NULL
+chess1$id <- NULL
+chess1$last_move_at <- NULL
+chess1$white_id <- NULL
+chess1$black_id <- NULL
+chess1$opening_eco <- NULL
+chess1$opening_name <- NULL
+chess1$opening_ply <- NULL
+chess1$turns <- NULL
+
+# remove draws and casual games
+chess1 <- chess1[chess1$victory_status != "draw", ]
+chess1 <- chess1[chess1$rated != "FALSE", ]
+
+# remove all variables except movelist, rating, and winners
+# keeping in games from all increment codes since we're evaluating move by move
+# so want more data points
+chess1$increment_code <- NULL
+chess1$victory_status <- NULL
+chess1$rated <- NULL
+chess1$white_rating <- NULL
+chess1$black_rating <- NULL
+chess1$increment_code <- NULL
+
+chess1$moves
+
+# XGBoost
+
+library(caret)
+library(xgboost)
+library(mltools)
+library(data.table)
+library(ggplot2)
+
+grid_tune <- expand.grid(
+  nrounds = 250,
+  max_depth = 2,
+  eta = 0.3,
+  gamma = 0,
+  colsample_bytree = 1,
+  min_child_weight = 1,
+  subsample = .5
+)
+# Fitting nrounds = 100, eta = 0.025, max_depth = 2, gamma = 0.5, colsample_bytree = 0.4,
+# min_child_weight = 1, subsample = 0.5 on full training set
+
+train_control <- trainControl(method = "cv",
+                              number = 3,
+                              verboseIter=TRUE,
+                              allowParallel = TRUE)
+
+xgb_tune <- train(winner ~ white_rating + eval,
+                  data = chess,
+                  trControl = train_control,
+                  tuneGrid = grid_tune,
+                  method = "xgbTree",
+                  verbose = TRUE)
+
+predict(xgb_tune, test)
+
+xgb.pred <- predict(xgb_tune, test)
+
+1-mean(xgb.pred==test$winner)
+
+# error rate of .3046813 with 3-fold CV (without tuning parameter)
+# error rate of .288548 with 3-fold CV (with tuning parameter)
+
+
+train_control <- trainControl(method = "cv",
+                              number = 3,
+                              verboseIter = TRUE,
+                              allowParallel = TRUE)
+final_grid <- expand.grid(nrounds = xgb_tune$bestTune$nrounds,
+                          eta = xgb_tune$bestTune$eta,
+                          max_depth = xgb_tune$bestTune$max_depth,
+                          gamma = xgb_tune$bestTune$gamma,
+                          colsample_bytree = xgb_tune$bestTune$colsample_bytree,
+                          min_child_weight = xgb_tune$bestTune$min_child_weight,
+                          subsample = xgb_tune$bestTune$subsample)
+xgb_model <- train(winner ~ white_rating + eval,
+                   data = chess,
+                   trControl = train_control,
+                   tuneGrid = final_grid,
+                   method = "xgbTree",
+                   verbose = TRUE)
+predict(xgb_model, test)
+xgb.pred <- predict(xgb_model, test)
+1-mean(xgb.pred==test$winner)
+
+library(DiagrammeR)
+xgb.plot.tree(model = xgb_model$finalModel, trees = 1)
